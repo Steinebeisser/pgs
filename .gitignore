@@ -1,0 +1,4 @@
+*.exe
+nob.exe.old
+*.log
+/build
