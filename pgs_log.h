@@ -1,5 +1,6 @@
-/*
-      PGS_LOG - simple/fast way to log
+/* PGS_LOG -v0.3.0 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
+
+    simple/fast logging library
 
     Most things you will use:
 
@@ -48,13 +49,10 @@
 /*
  * TODO:    - log colors
  *          - rotating log files (time & size)
- *          - buffer sizes
- *          - cleanup
  *          - thread safety
- *          - better memory size handling PGS_LOG_MAX_ENTRY_LEN or 512 bytes per path
  *          - cap number adding
  *          - stuff like NOB_DEPRECATED warning
- *          - minimal log level
+ *          - embedded mode also specialized for different micro controllers (less sizes, and less includes, no printf, no file etc)
 */
 
 #ifndef PGS_LOG_TIMESTAMP_FORMAT
@@ -65,6 +63,18 @@
 #endif
 #ifndef PGS_LOG_MAX_ENTRY_LEN
 #define PGS_LOG_MAX_ENTRY_LEN 2048
+#endif
+#ifndef PGS_LOG_MAX_PATH_LEN
+#define PGS_LOG_MAX_PATH_LEN 512
+#endif
+#ifndef PGS_LOG_MAX_TIMESTAMP_LEN
+#define PGS_LOG_MAX_TIMESTAMP_LEN 64
+#endif
+#ifndef PGS_LOG_TEMP_BUFFERS
+#define PGS_LOG_TEMP_BUFFERS 2
+#endif
+#ifndef PGS_LOG_MAX_TEMP_BUFFER_LEN
+#define PGS_LOG_MAX_TEMP_BUFFER_LEN 1024
 #endif
 #ifndef PGS_LOG_PATH
 #define PGS_LOG_PATH "logs/%d-%m-%Y.log"
@@ -185,10 +195,10 @@ Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *msg, int er
 #if PGS_LOG_USE_DETAIL_ERROR
     pgs_log_last_error.errno_value = errn;
     if (errn != 0) {
-        snprintf(pgs_log_last_error.message, sizeof(pgs_log_last_error.message), "%s: %s", msg, strerror(errn));
+        snprintf(pgs_log_last_error.message, PGS_LOG_ERROR_MESSAGE_SIZE, "%s: %s", msg, strerror(errn));
     } else {
-        strncpy(pgs_log_last_error.message, msg, sizeof(pgs_log_last_error.message) - 1);
-        pgs_log_last_error.message[sizeof(pgs_log_last_error.message) - 1] = '\0';
+        strncpy(pgs_log_last_error.message, msg, PGS_LOG_ERROR_MESSAGE_SIZE - 1);
+        pgs_log_last_error.message[PGS_LOG_ERROR_MESSAGE_SIZE - 1] = '\0';
     }
 #endif
     return type;
@@ -207,12 +217,11 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
             return pgs_log_set_last_error(PGS_LOG_ERR_FILE, "Failed to add STDOUT as output", 0);
 #endif
 #if PGS_LOG_ENABLE_FILE
-        size_t filename_size = 1024;
-        char filename[filename_size];
+        char filename[PGS_LOG_MAX_PATH_LEN];
         time_t t = time(NULL);
         struct tm *tm_info = localtime(&t);
 
-        if (strftime(filename, sizeof(filename), PGS_LOG_PATH, tm_info) == 0) {
+        if (strftime(filename, PGS_LOG_MAX_PATH_LEN, PGS_LOG_PATH, tm_info) == 0) {
             return pgs_log_set_last_error(PGS_LOG_ERR_FILE, "Failed to format log filename", 0);
         }
 
@@ -228,16 +237,20 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
 #elif PGS_LOG_OVERRIDE
             log_file = fopen(filename, "w");
 #else
-            char base[512];
-            char ext[128];
+            size_t base_size = PGS_LOG_MAX_PATH_LEN * 2 / 3;
+            size_t ext_size = PGS_LOG_MAX_PATH_LEN / 3;
+            char base[base_size];
+            char ext[ext_size];
             int file_ending_pos = pgs_log_get_last_occurence_of('.', filename);
             if (file_ending_pos == -1) {
-                strcpy(base, filename);
+                strncpy(base, filename,  base_size - 1);
+                base[base_size - 1] = '\0';
                 ext[0] = '\0';
             } else {
                 strncpy(base, filename, file_ending_pos);
                 base[file_ending_pos] = '\0';
-                strcpy(ext, filename + file_ending_pos); 
+                strncpy(ext, filename + file_ending_pos, ext_size - 1);
+                ext[ext_size - 1] = '\0';
             }
 
             int number = 0;
@@ -252,7 +265,6 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
              log_file = fopen(filename, "w");
         }
 
-        printf("Log file: %s\n", filename);
         if (!log_file) {
             return pgs_log_set_last_error(PGS_LOG_ERR_FILE, "Failed to open log file", errno);
         }
@@ -269,7 +281,7 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
     va_start(ap, fmt);
 
     char msg[PGS_LOG_MAX_ENTRY_LEN];
-    int msg_len = vsnprintf(msg, sizeof(msg), fmt, ap);
+    int msg_len = vsnprintf(msg, PGS_LOG_MAX_ENTRY_LEN, fmt, ap);
     va_end(ap);
 
     if (msg_len < 0) {
@@ -283,14 +295,18 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
     while (*format && pos < PGS_LOG_MAX_ENTRY_LEN - 1) {
         if (*format == '%' && *(format +1)) {
             switch (*(format + 1)) {
-                case 'L': pos += snprintf(log_string + pos, sizeof(log_string) - pos, "%s", pgs_log_level_to_string(level)); break;
-                case 'T': pos += snprintf(log_string + pos, sizeof(log_string) - pos, "%s", pgs_log_timestamp_string()); break;
-                case 'F': pos += snprintf(log_string + pos, sizeof(log_string) - pos, "%s", file); break;
-                case 'l': pos += snprintf(log_string + pos, sizeof(log_string) - pos, "%d", line); break;
-                case 'M': pos += snprintf(log_string + pos, sizeof(log_string) - pos, "%s", msg); break;
+                case 'L': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", pgs_log_level_to_string(level)); break;
+                case 'T': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", pgs_log_timestamp_string()); break;
+                case 'F': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", file); break;
+                case 'l': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%d", line); break;
+                case 'M': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", msg); break;
                 default: {
-                    log_string[pos++] = *format;
-                    log_string[pos++] = *(format + 1);
+                    if (pos < PGS_LOG_MAX_ENTRY_LEN - 1) {
+                        log_string[pos++] = *format;
+                    }
+                    if (pos < PGS_LOG_MAX_ENTRY_LEN - 1) {
+                        log_string[pos++] = *(format + 1);
+                    }
                 } break;
             }
             format += 2;
@@ -321,10 +337,10 @@ const char *pgs_log_level_to_string(Pgs_Log_Level level) {
 }
 
 const char *pgs_log_timestamp_string() {
-    static char buffer[64];
+    static char buffer[PGS_LOG_MAX_TIMESTAMP_LEN];
     time_t t = time(NULL);
     struct tm *tm_info = localtime(&t);
-    strftime(buffer, sizeof(buffer), PGS_LOG_TIMESTAMP_FORMAT, tm_info);
+    strftime(buffer, PGS_LOG_MAX_TIMESTAMP_LEN, PGS_LOG_TIMESTAMP_FORMAT, tm_info);
     return buffer;
 }
 
@@ -391,15 +407,15 @@ Pgs_Log_Error pgs_log_create_dirs_for_path(const char *fullpath) {
     if (!fullpath)
         return pgs_log_set_last_error(PGS_LOG_ERR, "no path passed", 0);
     size_t len = strlen(fullpath);
-    if (len == 0) 
+    if (len == 0)
         return pgs_log_set_last_error(PGS_LOG_ERR, "Path doesnt have a length", 0);
 
-    char tmp[512];
-    if (len >= sizeof(tmp)) {
+    if (len >= PGS_LOG_MAX_PATH_LEN) {
         return pgs_log_set_last_error(PGS_LOG_ERR, "Path too long", 0);
     }
 
-    strncpy(tmp, fullpath, sizeof(tmp));
+    char tmp[PGS_LOG_MAX_PATH_LEN];
+    strncpy(tmp, fullpath, PGS_LOG_MAX_PATH_LEN);
     tmp[len] = '\0';
 
     for (size_t i = 1; i < len; i++) {
@@ -473,11 +489,16 @@ void pgs_log_print_error_detail() {
 #endif
 }
 
+static char pgs_internal_temp_buffers[PGS_LOG_TEMP_BUFFERS][PGS_LOG_MAX_TEMP_BUFFER_LEN];
+static int pgs_temp_id = 0;
+
 char *pgs_log_temp_sprintf(const char *format, ...) {
-    static char buffer[1024];
+    char *buffer = pgs_internal_temp_buffers[pgs_temp_id];
+    pgs_temp_id = (pgs_temp_id + 1) % PGS_LOG_TEMP_BUFFERS;
+
     va_list args;
     va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
+    vsnprintf(buffer, PGS_LOG_MAX_TEMP_BUFFER_LEN, format, args);
     va_end(args);
 
     return buffer;
@@ -526,6 +547,12 @@ char *pgs_log_temp_sprintf(const char *format, ...) {
 
 /* 
     Revision History:
+
+        0.3.0 (2025-09-17) Improved Memory safety and buffer handling
+                            - no more dynamic allocations, no malloc
+                            - no more hardcoded sites, all configurable via #define
+                            - safe functions only (strncpy, vsnprintf)
+                            - better temp buffer (multiple and again definable sizes)
 
         0.2.0 (2025-09-17) Extended Error Handling
                             - Added Revision History and introduction text at top
