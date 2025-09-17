@@ -1,4 +1,4 @@
-/* PGS_LOG -v0.3.0 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
+/* PGS_LOG -v0.3.1 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
 
     simple/fast logging library
 
@@ -50,7 +50,6 @@
  * TODO:    - log colors
  *          - rotating log files (time & size)
  *          - thread safety
- *          - cap number adding
  *          - stuff like NOB_DEPRECATED warning
  *          - embedded mode also specialized for different micro controllers (less sizes, and less includes, no printf, no file etc)
 */
@@ -102,6 +101,9 @@
 #endif
 #ifndef PGS_LOG_ENABLED
 #define PGS_LOG_ENABLED true
+#endif
+#ifndef PGS_LOG_MAX_FILENAME_NUMBER
+#define PGS_LOG_MAX_FILENAME_NUMBER 99
 #endif
 
 typedef enum {
@@ -257,6 +259,8 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
 
             while (pgs_log_file_exists(filename)) {
                 number += 1;
+                if (number >= PGS_LOG_MAX_FILENAME_NUMBER)
+                    return pgs_log_set_last_error(PGS_LOG_ERR, "Too many log files with the same name exist, change `PGS_LOG_MAX_FILENAME_NUMBER` or fix ur config", errno);
                 snprintf(filename, filename_size, "%s(%d)%s", base, number, ext);
             }
             log_file = fopen(filename, "w");
@@ -547,6 +551,8 @@ char *pgs_log_temp_sprintf(const char *format, ...) {
 
 /* 
     Revision History:
+
+        0.3.1 (2025-09-17) Cap File creation amount
 
         0.3.0 (2025-09-17) Improved Memory safety and buffer handling
                             - no more dynamic allocations, no malloc
