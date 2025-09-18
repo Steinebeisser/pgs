@@ -112,7 +112,7 @@
 #   define PGS_LOG_ENABLE_BUFFERING true
 #endif
 #ifndef PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE
-#   define PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE true
+#   define PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE false
 #endif
 #ifndef PGS_LOG_BUFFER_INSTA_WRITE_TERMINAL
 #   define PGS_LOG_BUFFER_INSTA_WRITE_TERMINAL true
@@ -227,7 +227,7 @@ Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *msg, int er
 
 Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const char *fmt, ...) {
     if (!pgs_log_is_enabled)
-        return pgs_log_set_last_error(PGS_LOG_OK, "Loggind disabled", 0);
+        return pgs_log_set_last_error(PGS_LOG_OK, "Logging disabled", 0);
 
     if (level < pgs_log_minimal_log_level)
         return pgs_log_set_last_error(PGS_LOG_OK, "Below minimal Log Level", 0);
@@ -280,7 +280,7 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
                 number += 1;
                 if (number >= PGS_LOG_MAX_FILENAME_NUMBER)
                     return pgs_log_set_last_error(PGS_LOG_ERR, "Too many log files with the same name exist, change `PGS_LOG_MAX_FILENAME_NUMBER` or fix ur config", errno);
-                snprintf(filename, filename_size, "%s(%d)%s", base, number, ext);
+                snprintf(filename, PGS_LOG_MAX_PATH_LEN, "%s(%d)%s", base, number, ext);
             }
             log_file = fopen(filename, "w");
 #endif
@@ -349,6 +349,9 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
 }
 
 Pgs_Log_Error pgs_log_write_output(const char *str, size_t len) {
+    if (!PGS_LOG_ENABLED)
+        return pgs_log_set_last_error(PGS_LOG_OK, "Logging disabled", 0);
+
     for (int i = 0; i < pgs_output_count; ++i) {
         Pgs_Log_Output *o = &pgs_outputs[i];
 #if PGS_LOG_ENABLE_BUFFERING
@@ -633,6 +636,9 @@ char *pgs_log_temp_sprintf(const char *format, ...) {
 
 /* 
     Revision History:
+
+        0.4.1 (2025-09-18) Bugfix
+                            - fixed bug using old/non exisitng variable in log if not appending and not overriding
 
         0.4.0 (2025-09-18) Add Log buffering
                             - configurable log buffering for better performance

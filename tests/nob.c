@@ -4,47 +4,120 @@
 
 #define BUILD_FOLDER "build/"
 
+typedef struct {
+    const char *name;
+    const char **defines;
+} Test_Config;
+
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
-    Nob_Cmd cmd = {0};
-
-    const char *test_files[] = {
-        "pgs_log_test.c"
+    Test_Config configs[] = {
+        {
+            .name = "default",
+            .defines = (const char *[]) {
+                NULL
+            }
+        },
+        {
+            .name = "buffering_off",
+            .defines = (const char *[]) {
+                "PGS_LOG_ENABLE_BUFFERING=0",
+                NULL
+            }
+        },
+        {
+            .name = "logging_disabled",
+            .defines = (const char *[]) {
+                "PGS_LOG_ENABLED=0",
+                NULL
+            }
+        },
+        {
+            .name = "no_file_output",
+            .defines = (const char *[]) {
+                "PGS_LOG_ENABLE_FILE=0",
+                NULL
+            }
+        },
+        {
+            .name = "no_insta_write",
+            .defines = (const char *[]) {
+                "PGS_LOG_BUFFER_INSTA_WRITE_TERMINAL=0",
+                NULL
+            }
+        },
+        {
+            .name = "strip_prefix",
+            .defines = (const char *[]) {
+                "PGS_LOG_STRIP_PREFIX",
+                NULL
+            }
+        },
+        {
+            .name = "append_mode",
+            .defines = (const char *[]) {
+                "PGS_LOG_APPEND=1",
+                "PGS_LOG_OVERRIDE=0",
+                NULL
+            }
+        },
+        {
+            .name = "override_mode",
+            .defines = (const char *[]) {
+                "PGS_LOG_APPEND=0",
+                "PGS_LOG_OVERRIDE=1",
+                NULL
+            }
+        },
+        {
+            .name = "rotate_mode",
+            .defines = (const char *[]) {
+                "PGS_LOG_APPEND=0",
+                "PGS_LOG_OVERRIDE=0",
+                NULL
+            }
+        },
     };
 
-    if (!mkdir_if_not_exists(BUILD_FOLDER)) return 1;
+    if (!mkdir_if_not_exists(BUILD_FOLDER)) {
+        fprintf(stderr, "Failed to create build directory\n");
+        return 1;
+    }
 
-    for(size_t i = 0; i < NOB_ARRAY_LEN(test_files); ++i) {
-        const char *test_path = test_files[i];
-        char *test_name = nob_temp_strdup(test_path);
+    const char *test_file = "pgs_log_test.c";
+    char *test_name = temp_sprintf("pgs_log_test");
 
-        char *dot = strrchr(test_name, '.');
-        if (dot) *dot = '\0';
+    for (size_t i = 0; i < NOB_ARRAY_LEN(configs); ++i) {
+        Test_Config *config = &configs[i];
+        Nob_Cmd cmd = {0};
 
         cmd_append(&cmd, "cc");
-        cmd_append(&cmd, "-Wall");
-        cmd_append(&cmd, "-Wextra");
-        cmd_append(&cmd, "-I..");
-        cmd_append(&cmd, "-o");
-        cmd_append(&cmd, temp_sprintf("%s%s", BUILD_FOLDER, test_name));
-        cmd_append(&cmd, test_files[i]);
+        cmd_append(&cmd, "-Wall", "-Wextra", "-I..");
+        cmd_append(&cmd, "-o", temp_sprintf("%s%s_%s", BUILD_FOLDER, test_name, config->name));
+        for (size_t j = 0; config->defines[j] != NULL; ++j) {
+            cmd_append(&cmd, "-D", config->defines[j]);
+        }
+        cmd_append(&cmd, test_file);
 
         if (!cmd_run(&cmd)) {
-            fprintf(stderr, "Failed to compile %s\n", test_path);
+            fprintf(stderr, "Failed to compile %s with config %s\n", test_file, config->name);
             return 1;
         }
 
+        cmd.count = 0;
 #ifdef _WIN32
-        cmd_append(&cmd, temp_sprintf(".\\%s%s%s", BUILD_FOLDER, test_name, ".exe"));
+        cmd_append(&cmd, temp_sprintf(".\\%s%s_%s.exe", BUILD_FOLDER, test_name, config->name));
 #else
-        cmd_append(&cmd, temp_sprintf("./%s%s", BUILD_FOLDER, test_name));
+        cmd_append(&cmd, temp_sprintf("./%s%s_%s", BUILD_FOLDER, test_name, config->name));
 #endif
 
         if (!cmd_run(&cmd)) {
-            fprintf(stderr, "Failed tests for %s\n", test_path);
+            fprintf(stderr, "Tests failed for config %s\n", config->name);
             return 1;
         }
     }
 
+    printf("All tests passed!\n");
+    return 0;
 }
