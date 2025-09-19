@@ -1,4 +1,4 @@
-/* PGS_LOG -v0.4.0 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
+/* PGS_LOG -v0.4.2 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
 
     simple/fast logging library
 
@@ -203,7 +203,7 @@ static bool pgs_log_is_enabled = PGS_LOG_ENABLED;
 #if PGS_LOG_USE_DETAIL_ERROR
 static Pgs_Log_Error_Detail pgs_log_last_error = { .type = PGS_LOG_OK, .message = {0}, .errno_value = 0, };
 #else
-static Pgs_Log_Error_Detail pgs_log_last_error = { .type = PGS_LOG_OK };
+static Pgs_Log_Error_Detail pgs_log_last_error = { };
 #endif
 
 
@@ -212,8 +212,8 @@ Pgs_Log_Error_Detail pgs_log_get_last_error(void) {
 }
 
 Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *msg, int errn) {
-    pgs_log_last_error.type = type;
 #if PGS_LOG_USE_DETAIL_ERROR
+    pgs_log_last_error.type = type;
     pgs_log_last_error.errno_value = errn;
     if (errn != 0) {
         snprintf(pgs_log_last_error.message, PGS_LOG_ERROR_MESSAGE_SIZE, "%s: %s", msg, strerror(errn));
@@ -222,6 +222,8 @@ Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *msg, int er
         pgs_log_last_error.message[PGS_LOG_ERROR_MESSAGE_SIZE - 1] = '\0';
     }
 #endif
+    (void)msg;
+    (void)errn;
     return type;
 }
 
@@ -636,6 +638,10 @@ char *pgs_log_temp_sprintf(const char *format, ...) {
 
 /* 
     Revision History:
+
+        0.4.2 (2025-09-19) Bugfix
+                            - fixed wrong struct if not using detailed error mode
+                            - removed warnings
 
         0.4.1 (2025-09-18) Bugfix
                             - fixed bug using old/non exisitng variable in log if not appending and not overriding
