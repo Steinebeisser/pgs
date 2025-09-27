@@ -1,4 +1,4 @@
-/* PGS_LOG -v0.4.2 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
+/* PGS_LOG -v0.4.3 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
 
     simple/fast logging library
 
@@ -46,6 +46,7 @@
 #   include <direct.h>
 #endif
 
+
 /*
  * TODO:    - log colors
  *          - rotating log files (time & size)
@@ -88,7 +89,7 @@
 #   define PGS_LOG_ENABLE_FILE true
 #endif
 #ifndef PGS_LOG_ENABLE_STDOUT
-#   define PGS_LOG_ENABLE_STDOUT true
+#   define PGS_LOG_ENABLE_STDOUT false
 #endif
 #ifndef PGS_LOG_MAX_FD
 #   define PGS_LOG_MAX_FD 8
@@ -106,7 +107,7 @@
 #   define PGS_LOG_MAX_FILENAME_NUMBER 99
 #endif
 #ifndef PGS_LOG_MAX_OUTPUT_BUFFER_SIZE
-#   define PGS_LOG_MAX_OUTPUT_BUFFER_SIZE 8192
+#   define PGS_LOG_MAX_OUTPUT_BUFFER_SIZE 65536
 #endif
 #ifndef PGS_LOG_ENABLE_BUFFERING
 #   define PGS_LOG_ENABLE_BUFFERING true
@@ -157,7 +158,7 @@ extern Pgs_Log_Level pgs_log_minimal_log_level;
 Pgs_Log_Error_Detail pgs_log_get_last_error(void);
 Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *message, int errn);
 
-Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const char *fmt, ...);
+Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, size_t file_len, const char *line, size_t line_len, const char *fmt, ...);
 
 const char *pgs_log_level_to_string(Pgs_Log_Level level);
 const char *pgs_log_timestamp_string(void);
@@ -182,16 +183,52 @@ char *pgs_log_temp_sprintf(const char *format, ...);
 Pgs_Log_Error pgs_log_write_output(const char *str, size_t len);
 Pgs_Log_Error pgs_log_flush(void);
 
-#define PGS_LOG_DEBUG(fmt, ...) pgs_log(PGS_LOG_DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define PGS_LOG_INFO(fmt, ...) pgs_log(PGS_LOG_INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define PGS_LOG_WARN(fmt, ...) pgs_log(PGS_LOG_WARN, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define PGS_LOG_ERROR(fmt, ...) pgs_log(PGS_LOG_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define PGS_LOG_FATAL(fmt, ...) pgs_log(PGS_LOG_FATAL, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define STRINGIFY_(x) #x
+#define STRINGIFY(x) STRINGIFY_(x)
+
+#define PGS_LOG_DEBUG(fmt, ...)                                                                 \
+    do {                                                                                        \
+        pgs_log(PGS_LOG_DEBUG, __FILE__, (size_t)(sizeof(__FILE__) - 1),                        \
+        STRINGIFY(__LINE__), (size_t)(sizeof(STRINGIFY(__LINE__)) - 1), fmt, ##__VA_ARGS__);    \
+    } while(0)
+
+#define PGS_LOG_INFO(fmt, ...)                                                                  \
+    do {                                                                                        \
+        pgs_log(PGS_LOG_INFO, __FILE__, (size_t)(sizeof(__FILE__) - 1),                         \
+        STRINGIFY(__LINE__), (size_t)(sizeof(STRINGIFY(__LINE__)) - 1), fmt, ##__VA_ARGS__);    \
+    } while(0)
+
+#define PGS_LOG_WARN(fmt, ...)                                                                  \
+    do {                                                                                        \
+        pgs_log(PGS_LOG_WARN, __FILE__, (size_t)(sizeof(__FILE__) - 1),                         \
+        STRINGIFY(__LINE__), (size_t)(sizeof(STRINGIFY(__LINE__)) - 1), fmt, ##__VA_ARGS__);    \
+    } while(0)
+
+#define PGS_LOG_ERROR(fmt, ...)                                                                 \
+    do {                                                                                        \
+        pgs_log(PGS_LOG_ERROR, __FILE__, (size_t)(sizeof(__FILE__) - 1),                        \
+        STRINGIFY(__LINE__), (size_t)(sizeof(STRINGIFY(__LINE__)) - 1), fmt, ##__VA_ARGS__);    \
+    } while(0)
+
+#define PGS_LOG_FATAL(fmt, ...)                                                                 \
+    do {                                                                                        \
+        pgs_log(PGS_LOG_FATAL, __FILE__, (size_t)(sizeof(__FILE__) - 1),                        \
+        STRINGIFY(__LINE__), (size_t)(sizeof(STRINGIFY(__LINE__)) - 1), fmt, ##__VA_ARGS__);    \
+    } while(0)
+
 
 
 #endif // PGS_LOG_H
 
 #ifdef PGS_LOG_IMPLEMENTATION
+
+#if defined(_WIN32)
+    #include <io.h>
+    #define pgs_write _write
+#else
+    #include <unistd.h>
+    #define pgs_write write
+#endif
 
 Pgs_Log_Level pgs_log_minimal_log_level = PGS_LOG_DEBUG;
 
@@ -199,6 +236,9 @@ static Pgs_Log_Output pgs_outputs[PGS_LOG_MAX_FD];
 static int pgs_output_count = 0;
 static bool pgs_log_initialized = false;
 static bool pgs_log_is_enabled = PGS_LOG_ENABLED;
+
+static char pgs_log_cached_timestamp[PGS_LOG_MAX_TIMESTAMP_LEN];
+static time_t pgs_log_last_timestamp = 0;
 
 #if PGS_LOG_USE_DETAIL_ERROR
 static Pgs_Log_Error_Detail pgs_log_last_error = { .type = PGS_LOG_OK, .message = {0}, .errno_value = 0, };
@@ -227,13 +267,7 @@ Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *msg, int er
     return type;
 }
 
-Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const char *fmt, ...) {
-    if (!pgs_log_is_enabled)
-        return pgs_log_set_last_error(PGS_LOG_OK, "Logging disabled", 0);
-
-    if (level < pgs_log_minimal_log_level)
-        return pgs_log_set_last_error(PGS_LOG_OK, "Below minimal Log Level", 0);
-
+Pgs_Log_Error pgs_log_init_if_needed() {
     if (!pgs_log_initialized) {
 #if PGS_LOG_ENABLE_STDOUT
         if (pgs_log_add_fd_output(stdout) != PGS_LOG_OK) 
@@ -302,11 +336,28 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
         pgs_log_initialized = true;
         atexit(pgs_log_cleanup);
     }
+
+    return pgs_log_set_last_error(PGS_LOG_OK, "Initialized logging", 0);
+}
+
+Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, size_t file_len, const char *line, size_t line_len, const char *fmt, ...) {
+
+    if (!pgs_log_is_enabled)
+        return pgs_log_set_last_error(PGS_LOG_OK, "Logging disabled", 0);
+
+    if (level < pgs_log_minimal_log_level)
+        return pgs_log_set_last_error(PGS_LOG_OK, "Below minimal Log Level", 0);
+
+    Pgs_Log_Error init_err = pgs_log_init_if_needed();
+    if (init_err != PGS_LOG_OK) {
+        return init_err;
+    }
+
     va_list ap;
     va_start(ap, fmt);
 
     char msg[PGS_LOG_MAX_ENTRY_LEN];
-    int msg_len = vsnprintf(msg, PGS_LOG_MAX_ENTRY_LEN, fmt, ap);
+    size_t msg_len = vsnprintf(msg, PGS_LOG_MAX_ENTRY_LEN, fmt, ap);
     va_end(ap);
 
     if (msg_len < 0) {
@@ -320,19 +371,39 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, int line, const cha
     while (*format && pos < PGS_LOG_MAX_ENTRY_LEN - 1) {
         if (*format == '%' && *(format +1)) {
             switch (*(format + 1)) {
-                case 'L': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", pgs_log_level_to_string(level)); break;
-                case 'T': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", pgs_log_timestamp_string()); break;
-                case 'F': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", file); break;
-                case 'l': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%d", line); break;
-                case 'M': pos += snprintf(log_string + pos, PGS_LOG_MAX_ENTRY_LEN - pos, "%s", msg); break;
-                default: {
-                    if (pos < PGS_LOG_MAX_ENTRY_LEN - 1) {
-                        log_string[pos++] = *format;
-                    }
-                    if (pos < PGS_LOG_MAX_ENTRY_LEN - 1) {
-                        log_string[pos++] = *(format + 1);
-                    }
-                } break;
+                case 'L':
+                    const char *lvl = pgs_log_level_to_string(level);
+                    size_t lvl_length = strlen(lvl);
+                    if (pos + lvl_length >= PGS_LOG_MAX_ENTRY_LEN -1) break;
+                    memcpy(log_string + pos, lvl, lvl_length);
+                    pos += lvl_length;
+                    break;
+                case 'T':
+                    const char *timestamp = pgs_log_timestamp_string();  // If used more than once per log is less efficient but this way we have most improvement if not used
+                    size_t timestamp_length = strlen(timestamp);         // If used more than once per log is less efficient but this way we have most improvement if not used
+                    if (pos + timestamp_length >= PGS_LOG_MAX_ENTRY_LEN -1) break;
+                    memcpy(log_string + pos, timestamp, timestamp_length);
+                    pos += timestamp_length;
+                    break;
+                case 'F':
+                    if (pos + file_len >= PGS_LOG_MAX_ENTRY_LEN -1) break;
+                    memcpy(log_string + pos, file, file_len);
+                    pos += file_len;
+                    break;
+                case 'l':
+                    if (pos + line_len >= PGS_LOG_MAX_ENTRY_LEN -1) break;
+                    memcpy(log_string + pos, line, line_len);
+                    pos += line_len;
+                    break;
+                case 'M':
+                    if (pos + msg_len >= PGS_LOG_MAX_ENTRY_LEN -1) break;
+                    memcpy(log_string + pos, msg, msg_len);
+                    pos += msg_len;
+                    break;
+                default:
+                    if (pos < PGS_LOG_MAX_ENTRY_LEN - 1) log_string[pos++] = format[0];
+                    if (pos < PGS_LOG_MAX_ENTRY_LEN - 1) log_string[pos++] = format[1];
+                    break;
             }
             format += 2;
         } else {
@@ -359,20 +430,20 @@ Pgs_Log_Error pgs_log_write_output(const char *str, size_t len) {
 #if PGS_LOG_ENABLE_BUFFERING
 #if PGS_LOG_BUFFER_INSTA_WRITE_TERMINAL
         if (o->fd == stderr || o->fd == stdout) {
-            if (fwrite(str, 1, len, o->fd) != len)
+            if (pgs_write(fileno(o->fd), str, len) != len)
                 return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write msg to file", errno);
             continue;
         }
 #endif
         if (o->buf_pos + len > PGS_LOG_MAX_OUTPUT_BUFFER_SIZE) {
-            if (fwrite(o->buffer, 1, o->buf_pos, o->fd) != o->buf_pos)
+            if (pgs_write(fileno(o->fd), o->buffer, o->buf_pos) != o->buf_pos)
                 return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write buffer to file", errno);
 
             o->buf_pos = 0;
 
             if (o->buf_pos + len > PGS_LOG_MAX_OUTPUT_BUFFER_SIZE) {
 #if PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE
-                if (fwrite(str, 1, len, o->fd) != len)
+                if (pgs_write(fileno(o->fd), str, len) != len)
                     return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write msg to file", errno);
 #endif
                 return pgs_log_set_last_error(PGS_LOG_ERR, "Log file to big for buffering, insta writing, can be disabled with `PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE false`", 0);
@@ -382,7 +453,7 @@ Pgs_Log_Error pgs_log_write_output(const char *str, size_t len) {
         memcpy(o->buffer + o->buf_pos, str, len);
         o->buf_pos += len;
 #else
-        if (fwrite(str, 1, len, o->fd) != len)
+        if (pgs_write(fileno(o->fd), str, len) != len)
             return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write msg to file", errno);
 #endif
     }
@@ -394,7 +465,7 @@ Pgs_Log_Error pgs_log_flush(void) {
     for (int i = 0; i < pgs_output_count; ++i) {
         Pgs_Log_Output *o = &pgs_outputs[i];
 #if PGS_LOG_ENABLE_BUFFERING
-            if (fwrite(o->buffer, 1, o->buf_pos, o->fd) != o->buf_pos)
+            if (pgs_write(fileno(o->fd), o->buffer, o->buf_pos) != o->buf_pos)
                 return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write buffer to file", errno);
 
             o->buf_pos = 0;
@@ -417,12 +488,17 @@ const char *pgs_log_level_to_string(Pgs_Log_Level level) {
     }
 }
 
+
 const char *pgs_log_timestamp_string(void) {
-    static char buffer[PGS_LOG_MAX_TIMESTAMP_LEN];
-    time_t t = time(NULL);
-    struct tm *tm_info = localtime(&t);
-    strftime(buffer, PGS_LOG_MAX_TIMESTAMP_LEN, PGS_LOG_TIMESTAMP_FORMAT, tm_info);
-    return buffer;
+    time_t current_time = time(NULL);
+
+    if (current_time != pgs_log_last_timestamp) {
+        struct tm *tm_info = localtime(&current_time);
+        strftime(pgs_log_cached_timestamp, PGS_LOG_MAX_TIMESTAMP_LEN, PGS_LOG_TIMESTAMP_FORMAT, tm_info);
+        pgs_log_last_timestamp = current_time;
+    }
+
+    return pgs_log_cached_timestamp;
 }
 
 Pgs_Log_Error pgs_log_add_fd_output(FILE *file) {
@@ -638,6 +714,12 @@ char *pgs_log_temp_sprintf(const char *format, ...) {
 
 /* 
     Revision History:
+
+        0.4.3 (2025-09-27) Performance Improvements
+                            - less formatting/write overhead, timestamp caching, larger buffers, less strlen
+                            - went from around 1.2s for 1M logs to 45-60ms based if using static logs or dynamic
+                            - tested on arch with ryzen 7 7700X
+                            - marco usage stays the same, direct calls to pgs_log need to be adjusted
 
         0.4.2 (2025-09-19) Bugfix
                             - fixed wrong struct if not using detailed error mode
