@@ -1,4 +1,4 @@
-/* PGS_LOG -v0.4.3 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
+/* PGS_LOG -v0.4.4 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_log_h.h
 
     simple/fast logging library
 
@@ -41,6 +41,7 @@
 #include <sys/stat.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #ifdef _WIN32
 #   include <direct.h>
@@ -230,6 +231,12 @@ Pgs_Log_Error pgs_log_flush(void);
     #define pgs_write write
 #endif
 
+void sigint_handler(int signo) {
+    pgs_log_cleanup();
+    (void)signo;
+    exit(130);
+}
+
 Pgs_Log_Level pgs_log_minimal_log_level = PGS_LOG_DEBUG;
 
 static Pgs_Log_Output pgs_outputs[PGS_LOG_MAX_FD];
@@ -269,6 +276,7 @@ Pgs_Log_Error pgs_log_set_last_error(Pgs_Log_Error type, const char *msg, int er
 
 Pgs_Log_Error pgs_log_init_if_needed() {
     if (!pgs_log_initialized) {
+        signal(SIGINT, sigint_handler);
 #if PGS_LOG_ENABLE_STDOUT
         if (pgs_log_add_fd_output(stdout) != PGS_LOG_OK) 
             return pgs_log_set_last_error(PGS_LOG_ERR_FILE, "Failed to add STDOUT as output", 0);
@@ -357,7 +365,7 @@ Pgs_Log_Error pgs_log(Pgs_Log_Level level, const char *file, size_t file_len, co
     va_start(ap, fmt);
 
     char msg[PGS_LOG_MAX_ENTRY_LEN];
-    size_t msg_len = vsnprintf(msg, PGS_LOG_MAX_ENTRY_LEN, fmt, ap);
+    int msg_len = vsnprintf(msg, PGS_LOG_MAX_ENTRY_LEN, fmt, ap);
     va_end(ap);
 
     if (msg_len < 0) {
@@ -430,20 +438,20 @@ Pgs_Log_Error pgs_log_write_output(const char *str, size_t len) {
 #if PGS_LOG_ENABLE_BUFFERING
 #if PGS_LOG_BUFFER_INSTA_WRITE_TERMINAL
         if (o->fd == stderr || o->fd == stdout) {
-            if (pgs_write(fileno(o->fd), str, len) != len)
+            if (pgs_write(fileno(o->fd), str, len) != (ssize_t)len)
                 return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write msg to file", errno);
             continue;
         }
 #endif
         if (o->buf_pos + len > PGS_LOG_MAX_OUTPUT_BUFFER_SIZE) {
-            if (pgs_write(fileno(o->fd), o->buffer, o->buf_pos) != o->buf_pos)
+            if (pgs_write(fileno(o->fd), o->buffer, o->buf_pos) != (ssize_t)o->buf_pos)
                 return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write buffer to file", errno);
 
             o->buf_pos = 0;
 
             if (o->buf_pos + len > PGS_LOG_MAX_OUTPUT_BUFFER_SIZE) {
 #if PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE
-                if (pgs_write(fileno(o->fd), str, len) != len)
+                if (pgs_write(fileno(o->fd), str, len) != (ssize_t)len)
                     return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write msg to file", errno);
 #endif
                 return pgs_log_set_last_error(PGS_LOG_ERR, "Log file to big for buffering, insta writing, can be disabled with `PGS_LOG_BUFFER_INSTA_WRITE_IF_TOO_LARGE false`", 0);
@@ -465,7 +473,7 @@ Pgs_Log_Error pgs_log_flush(void) {
     for (int i = 0; i < pgs_output_count; ++i) {
         Pgs_Log_Output *o = &pgs_outputs[i];
 #if PGS_LOG_ENABLE_BUFFERING
-            if (pgs_write(fileno(o->fd), o->buffer, o->buf_pos) != o->buf_pos)
+            if (pgs_write(fileno(o->fd), o->buffer, o->buf_pos) != (ssize_t)o->buf_pos)
                 return pgs_log_set_last_error(PGS_LOG_ERR_IO, "Failed to write buffer to file", errno);
 
             o->buf_pos = 0;
@@ -714,6 +722,8 @@ char *pgs_log_temp_sprintf(const char *format, ...) {
 
 /* 
     Revision History:
+
+        0.4.4 (2025-09-29) Bug fixes + SigInt handler
 
         0.4.3 (2025-09-27) Performance Improvements
                             - less formatting/write overhead, timestamp caching, larger buffers, less strlen

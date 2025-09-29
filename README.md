@@ -6,4 +6,4 @@
 
 |Library|latest version|category|LoC|description|
 |:-|:-|:-|:-|:-|
-|[pgs\_log](pgs_log.h)|0.4.3|log|804|simple logs|
+|[pgs\_log](pgs_log.h)|0.4.4|log|814|simple logs|
