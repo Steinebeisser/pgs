@@ -7,4 +7,5 @@
 |Library|latest version|category|LoC|description|
 |:-|:-|:-|:-|:-|
 |[pgs\_log](pgs_log.h)|0.4.4|log|814|simple logs|
-|[pgs\_args](pgs_args.h)|0.2.0|args|513|simple args|
+|[pgs\_args](pgs_args.h)|0.3.0|args|657|simple args|
+|[pgs\_macros](pgs_macros.h)|0.1.0|macros|273|collection of useful macros|

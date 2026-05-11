@@ -1,4 +1,4 @@
-/* PGS_ARGS - v0.2.0 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_args.h
+/* PGS_ARGS - v0.3.0 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_args.h
  *
  * USAGE:
  * Define PGS_ARGS macro with your arguments before including this header.
@@ -45,12 +45,19 @@
  *   program --help=advanced              # help value is "advanced"
  */
 
+#if defined(__GNUC__) || defined(__clang__)
+#   define PGS_ARGS_UNUSED __attribute__((unused))
+#else
+#   define PGS_ARGS_UNUSED
+#endif
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <errno.h>
 
 #ifndef PGS_ARGS_FUNC_PREFIX
 #   define PGS_ARGS_FUNC_PREFIX pgs_args
@@ -63,6 +70,21 @@
 #define PGS__ID          PGS__PASTE(PGS_ARGS_FUNC_PREFIX, _arg_id)
 #define PGS__META        PGS__PASTE(PGS_ARGS_FUNC_PREFIX, _arg_meta)
 #define PGS__COUNT       PGS__PASTE(PGS_ARGS_FUNC_PREFIX, _ARG_COUNT)
+
+#define KIB (1024.0)
+#define MIB (KIB * 1024.0)
+#define GIB (MIB * 1024.0)
+#define TIB (GIB * 1024.0)
+
+#define KB  (1000.0)
+#define MB  (KB * 1000.0)
+#define GB  (MB * 1000.0)
+#define TB  (GB * 1000.0)
+
+#define PGS_ARGS_INT       "$int"
+#define PGS_ARGS_UINT      "$uint"
+#define PGS_ARGS_POSINT    "$posint"
+#define PGS_ARGS_NUMBER    "$number"
 
 typedef enum {
     PGS_ARG_FLAG,
@@ -111,19 +133,113 @@ void PGS__FN(_print_help)(void);
 void PGS__FN(_print_help_specific_id)(PGS__ID arg_id);
 void PGS__FN(_print_help_specific_name)(const char *name);
 
-static uint64_t __attribute__((unused)) pgs_args_parse_size(const char *str);
+
+static uint64_t PGS_ARGS_UNUSED pgs_args_parse_count(const char *str);
+static uint64_t PGS_ARGS_UNUSED pgs_args_parse_size(const char *str);
 
 #ifdef PGS_ARGS_IMPLEMENTATION
 
-#define KIB (1024.0)
-#define MIB (KIB * 1024.0)
-#define GIB (MIB * 1024.0)
-#define TIB (GIB * 1024.0)
+static const char *PGS__FN(_builtin_help)(const char *validator) {
+    if (strcmp(validator, PGS_ARGS_INT) == 0)
+        return "signed integer, e.g. -5, 0, 5";
 
-#define KB  (1000.0)
-#define MB  (KB * 1000.0)
-#define GB  (MB * 1000.0)
-#define TB  (GB * 1000.0)
+    if (strcmp(validator, PGS_ARGS_UINT) == 0)
+        return "unsigned integer, 0 and up";
+
+    if (strcmp(validator, PGS_ARGS_POSINT) == 0)
+        return "positive integer, 1 and up";
+
+    if (strcmp(validator, PGS_ARGS_NUMBER) == 0)
+        return "number, including floats";
+
+    return NULL;
+}
+
+static void PGS__FN(_print_valid_values_error)(const char *valid_values) {
+    if (!valid_values) return;
+
+    char *dup = strdup(valid_values);
+    if (!dup) {
+        fprintf(stderr, "%s", valid_values);
+        return;
+    }
+
+    char *token = strtok(dup, "|");
+    bool first = true;
+
+    while (token) {
+        const char *help = PGS__FN(_builtin_help)(token);
+
+        if (!first)
+            fprintf(stderr, ", ");
+
+        if (help)
+            fprintf(stderr, "%s (%s)", token, help);
+        else
+            fprintf(stderr, "%s", token);
+
+        first = false;
+        token = strtok(NULL, "|");
+    }
+
+    free(dup);
+}
+
+static bool PGS__FN(_is_int)(const char *s) {
+    if (!s || !*s) return false;
+
+    errno = 0;
+    char *end = NULL;
+    strtoll(s, &end, 10);
+
+    return errno != ERANGE && end != s && *end == '\0';
+}
+
+static bool PGS__FN(_is_uint)(const char *s) {
+    if (!s || !*s) return false;
+    if (*s == '-') return false;
+
+    errno = 0;
+    char *end = NULL;
+    strtoull(s, &end, 10);
+
+    return errno != ERANGE && end != s && *end == '\0';
+}
+
+static bool PGS__FN(_is_posint)(const char *s) {
+    if (!PGS__FN(_is_uint)(s)) return false;
+
+    char *end = NULL;
+    unsigned long long n = strtoull(s, &end, 10);
+
+    return n > 0;
+}
+
+static bool PGS__FN(_is_number)(const char *s) {
+    if (!s || !*s) return false;
+
+    errno = 0;
+    char *end = NULL;
+    strtod(s, &end);
+
+    return errno != ERANGE && end != s && *end == '\0';
+}
+
+static bool PGS__FN(_validate_builtin)(const char *rule, const char *value) {
+    if (strcmp(rule, PGS_ARGS_INT) == 0)
+        return PGS__FN(_is_int)(value);
+
+    if (strcmp(rule, PGS_ARGS_UINT) == 0)
+        return PGS__FN(_is_uint)(value);
+
+    if (strcmp(rule, PGS_ARGS_POSINT) == 0)
+        return PGS__FN(_is_posint)(value);
+
+    if (strcmp(rule, PGS_ARGS_NUMBER) == 0)
+        return PGS__FN(_is_number)(value);
+
+    return false;
+}
 
 static uint64_t pgs_args_parse_size(const char *str) {
     if (!str) return 0;
@@ -144,6 +260,26 @@ static uint64_t pgs_args_parse_size(const char *str) {
     else if (!strcasecmp(end, "tb") || !strcasecmp(end, "t")) val *= TB;
 
     return (uint64_t)val;
+}
+
+static uint64_t pgs_args_parse_count(const char *str) {
+    if (!str || !*str)
+        return 0;
+
+    while (isspace((unsigned char)*str))
+        str++;
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long n = strtoull(str, &end, 10);
+
+    if (errno == ERANGE)
+        return 0;
+
+    if (end == str || !end || *end != '\0')
+        return 0;
+
+    return n;
 }
 
 static PGS__ID PGS__FN(_find_by_short)(char flag) {
@@ -183,7 +319,7 @@ bool PGS__FN(_validate_value)(PGS__ID arg_id, const char *value) {
     char *token = strtok(valid_copy, "|");
 
     while (token) {
-        if (strcmp(token, value) == 0) {
+        if (strcmp(token, value) == 0 || PGS__FN(_validate_builtin)(token, value)) {
             free(valid_copy);
             return true;
         }
@@ -262,8 +398,10 @@ bool PGS__FN(_parse)(PGS__ARGS_T *args, int argc, char** argv, bool ignore_on_er
                 if (!PGS__FN(_validate_value)(arg_id, value)) {
                     if (ignore_on_error)
                         continue;
-                    fprintf(stderr, "Error: Invalid value '%s' for '--%s'. Valid values: %s\n",
-                            value, flag_name, meta->valid_values);
+                    fprintf(stderr, "Error: Invalid value '%s' for '--%s'. Valid values: ",
+                            value, flag_name);
+                    PGS__FN(_print_valid_values_error)(meta->valid_values);
+                    fprintf(stderr, "\n");
                     return false;
                 }
                 PGS__FN(_set_value)(args, arg_id, value);
@@ -308,7 +446,9 @@ bool PGS__FN(_parse)(PGS__ARGS_T *args, int argc, char** argv, bool ignore_on_er
                     if (value && !PGS__FN(_validate_value)(arg_id, value)) {
                         if (ignore_on_error)
                             continue;
-                        fprintf(stderr, "Error: Invalid value '%s' for '-%c'\n", value, *f);
+                        fprintf(stderr, "Error: Invalid value '%s' for '-%c'. Valid values: ", value, *f);
+                        PGS__FN(_print_valid_values_error)(meta->valid_values);
+                        fprintf(stderr, "\n");
                         return false;
                     }
                     PGS__FN(_set_value)(args, arg_id, value);
@@ -463,6 +603,10 @@ void PGS__FN(_print_help_specific_id)(PGS__ID arg_id) {
 /*
     Revision History:
 
+        0.3.0 (2026-05-11) Built In Validators and parsing helpers, improve help string
+                            - validator for valid input
+                                - int, uint, pos int, generic numbers
+
         0.2.0 (2026-04-12) Subcommand support
                             - configurable names for multiple independant instances
 
@@ -475,7 +619,7 @@ void PGS__FN(_print_help_specific_id)(PGS__ID arg_id) {
    This software is available under 2 licenses -- choose whichever you prefer.
    ------------------------------------------------------------------------------
    ALTERNATIVE A - MIT License
-   Copyright (c) 2025 Paul Geisthardt
+   Copyright (c) 2025-2026 Paul Geisthardt
    Permission is hereby granted, free of charge, to any person obtaining a copy of
    this software and associated documentation files (the "Software"), to deal in
    the Software without restriction, including without limitation the rights to
