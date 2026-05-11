@@ -1,4 +1,4 @@
-/* PGS_ARGS - v0.3.0 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_args.h
+/* PGS_ARGS - v0.3.1 - Public Domain - https://github.com/Steinebeisser/pgs/blob/master/pgs_args.h
  *
  * USAGE:
  * Define PGS_ARGS macro with your arguments before including this header.
@@ -285,7 +285,7 @@ static uint64_t pgs_args_parse_count(const char *str) {
 static PGS__ID PGS__FN(_find_by_short)(char flag) {
     for (int i = 0; i < PGS__COUNT; ++i) {
         if (PGS__META[i].short_flag == flag) {
-            return i;
+            return (PGS__ID)i;
         }
     }
     return PGS__COUNT;
@@ -294,7 +294,7 @@ static PGS__ID PGS__FN(_find_by_short)(char flag) {
 static PGS__ID PGS__FN(_find_by_long)(const char *flag) {
     for (int i = 0; i < PGS__COUNT; ++i) {
         if (PGS__META[i].long_flag && strcmp(PGS__META[i].long_flag, flag) == 0) {
-            return i;
+            return (PGS__ID)i;
         }
     }
     return PGS__COUNT;
@@ -303,7 +303,7 @@ static PGS__ID PGS__FN(_find_by_long)(const char *flag) {
 static PGS__ID PGS__FN(_find_by_name)(const char *name) {
     for (int i = 0; i < PGS__COUNT; ++i) {
         if (strcmp(PGS__META[i].name, name) == 0) {
-            return i;
+            return (PGS__ID)i;
         }
     }
     return PGS__COUNT;
@@ -339,6 +339,8 @@ static void PGS__FN(_set_value)(PGS__ARGS_T *args, PGS__ID arg_id, const char *v
             break;
         PGS_ARGS
 #undef PGS_ARG
+        case PGS__COUNT:
+            break;
         default: break;
     }
 }
@@ -466,13 +468,14 @@ bool PGS__FN(_parse)(PGS__ARGS_T *args, int argc, char** argv, bool ignore_on_er
 
                 return true;
             } else {
-                args->positionals = realloc(args->positionals, sizeof(char*) * (args->positional_count + 1));
-                if (!args->positionals) {
+                void *new_positionals = realloc(args->positionals, sizeof(*args->positionals) * (args->positional_count + 1));
+                if (!new_positionals) {
                     if (ignore_on_error)
                         continue;
                     fprintf(stderr, "Error: Out of memory\n");
                     return false;
                 }
+                args->positionals = (const char **)new_positionals;
                 args->positionals[args->positional_count++] = arg;
             }
         }
@@ -602,6 +605,10 @@ void PGS__FN(_print_help_specific_id)(PGS__ID arg_id) {
 
 /*
     Revision History:
+
+        0.3.1 (2026-05-11) Fix c++ compatibility warnings
+                            - -Wswitch fix
+                            - explicit conversion
 
         0.3.0 (2026-05-11) Built In Validators and parsing helpers, improve help string
                             - validator for valid input
